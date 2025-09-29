@@ -28,7 +28,7 @@
                 var(--bg);
     color:#e6eef8;
     -webkit-font-smoothing:antialiased;
-    -moz-osx-osx-font-smoothing:grayscale;
+    -moz-osx-osx-smoothing:grayscale;
   }
 
   .container{
@@ -293,7 +293,7 @@
 <script>
 /*
   Simulador de Evolución Estelar — index.html
-  Actualizaciones: Escalas del Diagrama H-R Dinámicas (Ajustadas por Masa).
+  Actualizaciones: Escalas del Diagrama H-R corregidas para estrellas muy masivas.
 */
 
 /* ------------ Configuración / modelos simplificados ------------ */
@@ -365,19 +365,19 @@ function lumFor(stageId, mass, progressStage){
   }
 }
 
-// NUEVA FUNCIÓN: Determina los límites de escala H-R basados en la masa.
+// FUNCIÓN CORREGIDA: Determina los límites de escala H-R basados en la masa.
 function getScaleLimitsForMass(mass) {
     let tempMin = 2000;
     let tempMax = 50000;
     let lumMin = 1e-4;
     let lumMax = 1e6;
     
-    if (mass <= 1.5) { // Estrellas de baja masa (como el Sol o menos)
+    if (mass <= 1.5) { 
         tempMin = 2500;
         tempMax = 20000;
         lumMin = 1e-4;
         lumMax = 1000;
-    } else if (mass <= 8) { // Estrellas de masa intermedia
+    } else if (mass <= 8) { 
         tempMin = 3000;
         tempMax = 35000;
         lumMin = 0.1;
@@ -385,8 +385,10 @@ function getScaleLimitsForMass(mass) {
     } else { // Estrellas de alta masa (> 8 M☉)
         tempMin = 5000;
         tempMax = 50000;
-        lumMin = 10;
-        lumMax = 1e6;
+        // CORRECCIÓN CLAVE: Ajustar LumMax para que M^3.5 no se salga del rango.
+        // M=100 -> L_max ~ 1.5e8. Usaremos 1e9 para margen de seguridad.
+        lumMin = 100; 
+        lumMax = 1e9; // 1,000,000,000 L☉
     }
     
     // Ajuste extra para asegurar que el punto final no quede fuera de la Enana Blanca.
@@ -425,7 +427,6 @@ let modalTitle = document.getElementById('modalTitle');
 let modalContent = document.getElementById('modalContent');
 let modalClose = document.getElementById('modalClose');
 
-// Referencia global al objeto Chart
 let hrChart = null; 
 
 massInput.addEventListener('input', syncMassFromInput);
@@ -439,13 +440,13 @@ function syncMassFromInput(e){
   massRange.value = v;
   massInput.value = v;
   rebuildTimeline();
-  updateChartScales(); // Llamar para ajustar escalas inmediatamente
+  updateChartScales(); 
 }
 function syncMassFromRange(e){
   let v = parseFloat(e.target.value || 1.0);
   massInput.value = v;
   rebuildTimeline();
-  updateChartScales(); // Llamar para ajustar escalas inmediatamente
+  updateChartScales(); 
 }
 
 /* Stage sequence builder based on mass */
@@ -570,6 +571,7 @@ hrChart = new Chart(ctx, {
         reverse: true,
         grid: { color: 'rgba(255,255,255,0.05)' },
         ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
+            // Custom ticks to show powers of 10 and 5000/20000 marks
             if (Math.log10(value) % 1 === 0 && value >= 1000) return formatNumber(value);
             if (value >= 10000 && (value / 5000) % 1 === 0) return formatNumber(value);
             return null;
@@ -582,6 +584,7 @@ hrChart = new Chart(ctx, {
         max: 1e6, 
         grid: { color: 'rgba(255,255,255,0.05)' },
         ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
+            // Custom ticks to show powers of 10
             if (Math.log10(value) % 1 === 0) return formatNumber(value);
             return null; 
         } }
@@ -605,7 +608,7 @@ function updateChartScales() {
     hrChart.options.scales.y.min = limits.lumMin;
     hrChart.options.scales.y.max = limits.lumMax;
     
-    hrChart.update('none'); // Usar 'none' para actualizar solo la configuración sin transiciones
+    hrChart.update('none'); 
 }
 
 /* ---------------- Simulation loop ---------------- */
@@ -951,7 +954,7 @@ speedBtns.forEach(btn => {
 /* initialize */
 initializeSimulation();
 rebuildTimeline();
-updateChartScales(); // Llamar al inicio para configurar las escalas con la masa inicial de 1.0
+updateChartScales(); 
 
 /* Accessibility: keyboard to close modal */
 document.addEventListener('keydown', (e)=>{
