@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Simulador de Evolución Estelar — Diagrama H-R Dinámico</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<style>
+  :root{
+    --bg:#0b1220;
+    --panel:#0f1724;
+    --accent:#7cc7ff;
+    --accent-2:#ff9aa2;
+    --muted:#94a3b8;
+    --success:#7ef2a0;
+    --danger:#ff7b72;
+    --glass: rgba(255,255,255,0.03);
+    --node-size: 84px;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  }
+  html,body{
+    height:100%;
+    margin:0;
+    background: radial-gradient(1200px 600px at 10% 10%, rgba(124,199,255,0.04), transparent 4%),
+                radial-gradient(1200px 600px at 90% 90%, rgba(255,154,162,0.03), transparent 4%),
+                var(--bg);
+    color:#e6eef8;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-osx-font-smoothing:grayscale;
+  }
+
+  .container{
+    max-width:1400px; 
+    margin:28px auto;
+    padding:20px;
+    grid-template-columns: 320px 1fr; 
+    display:grid;
+    gap:20px;
+  }
+
+  /* Responsive */
+  @media (max-width:980px){
+    .container{ grid-template-columns: 1fr; padding:12px; }
+  }
+
+  .panel{
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:14px;
+    padding:18px;
+    box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+    border: 1px solid rgba(255,255,255,0.03);
+  }
+
+  h1{ margin:0 0 10px 0; font-size:20px; display:flex; gap:8px; align-items:center; }
+  .muted{ color:var(--muted); font-size:13px; }
+
+  /* Controls */
+  .controls { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
+  .speed-controls { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.08); }
+
+  input[type="number"]{
+    width:120px;
+    padding:8px 10px;
+    border-radius:8px;
+    border:1px solid rgba(255,255,255,0.04);
+    background:var(--glass);
+    color:inherit;
+    font-size:14px;
+  }
+  input[type="range"]{ width:160px; }
+
+  button{
+    padding:8px 12px;
+    border-radius:8px;
+    border: none;
+    background: linear-gradient(180deg, rgba(124,199,255,0.12), rgba(124,199,255,0.06));
+    color:var(--accent);
+    cursor:pointer;
+    font-weight:600;
+    transition: transform 0.1s;
+  }
+  button:active { transform: scale(0.98); }
+
+  button.ghost{
+    background:transparent;
+    border:1px solid rgba(255,255,255,0.03);
+    color:var(--muted);
+  }
+  /* Botón de velocidad activo */
+  button.speed-active {
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    color: var(--bg);
+    font-weight: 900;
+  }
+
+
+  /* Left column specifics */
+  .stats { margin-top:14px; display:grid; gap:8px; }
+  .stat-row{ display:flex; justify-content:space-between; font-size:14px; padding:8px; border-radius:8px; background: rgba(255,255,255,0.01); }
+  .stat-row small{ color:var(--muted); }
+
+  .star-preview {
+    width: 100%; 
+    height: 280px; 
+    border-radius:14px; 
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+    border:1px solid rgba(255,255,255,0.03);
+    position:relative;
+    margin-bottom: 20px; 
+  }
+  .star-svg{
+    width: 80%; 
+    height: 80%; 
+  }
+
+  /* Timeline diagram */
+  .timeline {
+    display:flex;
+    gap:18px;
+    align-items:center;
+    justify-content:flex-start;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    padding:12px;
+    margin-top:10px;
+  }
+  .node{
+    flex:0 0 auto;
+    width:var(--node-size);
+    height:var(--node-size);
+    border-radius:14px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
+    border:1px solid rgba(255,255,255,0.03);
+    position:relative;
+    text-align:center;
+    padding:8px;
+    transition:transform .25s, box-shadow .25s;
+  }
+  .node .label{ font-size:12px; color:var(--muted); }
+  .node.active{
+    box-shadow: 0 10px 30px rgba(124,199,255,0.06);
+    transform:translateY(-6px) scale(1.05);
+    background: linear-gradient(180deg, rgba(124,199,255,0.09), rgba(124,199,255,0.03));
+    border:1px solid rgba(124,199,255,0.22);
+  }
+  .node .title{ font-weight:700; font-size:13px; display:block; color:#eaf6ff; }
+  .node .info-btn {
+    position:absolute;
+    top:6px; right:6px;
+    background:transparent;
+    border:none;
+    color:var(--muted);
+    cursor:pointer;
+    font-size:14px;
+  }
+
+  /* Graph area */
+  .chart-wrapper{ 
+    height:500px; 
+    padding:8px; 
+  } 
+
+  .info-modal {
+    position:fixed;
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%) scale(0.98);
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:12px;
+    padding:18px;
+    width:min(560px, 92%);
+    z-index:1200;
+    box-shadow: 0 12px 40px rgba(2,6,23,0.6);
+    border:1px solid rgba(255,255,255,0.03);
+    display:none;
+  }
+  .info-modal.show{ display:block; }
+  .info-modal h3{ margin:0 0 8px 0; }
+  .modal-close{
+    float:right;
+    background:transparent; border:none; color:var(--muted); font-size:16px; cursor:pointer;
+  }
+
+  .row { display:flex; gap:10px; align-items:center; }
+  a.link{ color:var(--accent); font-weight:600; text-decoration:none; }
+  .badge{ padding:4px 8px; border-radius:999px; background:rgba(255,255,255,0.02); color:var(--muted); font-size:12px; }
+
+  /* small tip */
+  .tip{ font-size:12px; color:var(--muted); margin-top:6px; }
+
+</style>
+</head>
+<body>
+  <div class="container">
+    
+    <div class="panel">
+      <h1>Simulador de Evolución Estelar <span class="muted">— Diagrama H-R Dinámico</span></h1>
+
+      <div>
+        <label for="massInput" class="muted">Masa inicial (M☉)</label><br>
+        <input id="massInput" type="number" min="0.1" max="100" step="0.1" value="1.0" aria-label="Masa inicial en masas solares">
+        <div style="margin-top:8px;">
+          <input id="massRange" type="range" min="0.1" max="100" step="0.1" value="1.0">
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn">▶ Iniciar</button>
+        <button id="pauseBtn" class="ghost" disabled>⏸ Pausar</button>
+        <button id="resetBtn" class="ghost">⟲ Reset</button>
+        <button id="exportBtn" class="ghost">⬇️ Exportar CSV</button>
+      </div>
+
+      <div class="speed-controls">
+        <small class="muted">Ritmo de simulación:</small>
+        <button id="speed025" class="ghost speed-btn" data-speed="0.25">x0.25</button>
+        <button id="speed1" class="speed-active speed-btn" data-speed="1">x1</button>
+        <button id="speed2" class="ghost speed-btn" data-speed="2">x2</button>
+        <button id="speed4" class="ghost speed-btn" data-speed="4">x4</button>
+        <button id="speed8" class="ghost speed-btn" data-speed="8">x8</button>
+      </div>
+      <div class="stats">
+        <div class="stat-row"><div><small>Etapa actual</small><div id="currentStage" style="font-weight:700">—</div></div></div>
+        <div class="stat-row"><div><small>Temperatura superficial</small><div id="tempVal">— K</div></div></div>
+        <div class="stat-row"><div><small>Luminosidad</small><div id="lumVal">— L☉</div></div></div>
+        <div class="stat-row"><div><small>Tiempo transcurrido</small><div id="timeVal">0 yr</div></div></div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div><small class="muted">Diagrama secuencial</small></div>
+          <div class="badge" id="finalBadge">Final: —</div>
+        </div>
+
+        <div class="timeline" id="timeline">
+          </div>
+        <div class="tip">Toca ℹ️ en cada etapa para leer la explicación didáctica.</div>
+      </div>
+
+    </div>
+
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h3 style="margin:0">Previsualización de la estrella</h3>
+          <div class="muted" style="margin-top:6px;">Representación visual de la estrella en su etapa actual.</div>
+        </div>
+      </div>
+
+      <div class="star-preview panelish" aria-hidden="true">
+        <svg class="star-svg" viewBox="0 0 200 200" id="starSVG" role="img" aria-label="Representación de la estrella"></svg>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px;">
+        <div>
+          <h3 style="margin:0">Diagrama de Hertzsprung-Russell (H-R)</h3>
+          <div class="muted" style="margin-top:6px;">Escalas adaptadas a la masa inicial. Luminosidad (log) vs. Temperatura (log, inversa)</div>
+        </div>
+        <div class="muted">Visualización astrofísica</div>
+      </div>
+
+      <div class="chart-wrapper">
+        <canvas id="hrChart" width="400" height="400" aria-label="Diagrama de Hertzsprung-Russell"></canvas>
+      </div>
+
+      <div style="margin-top:14px;">
+        <h4 style="margin:0 0 8px 0">Detalles de la simulación</h4>
+        <p class="muted" style="margin:0 0 12px 0">Esta simulación usa modelos simplificados y escalas para representar tendencias generales de la evolución estelar según la masa inicial. No sustituye a modelos astrofísicos detallados.</p>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="downloadSample" class="ghost">Ejemplo CSV</button>
+          <button id="explainBtn" class="ghost">ℹ️ Cómo funciona</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="infoModal" class="info-modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <button class="modal-close" id="modalClose">✕</button>
+    <h3 id="modalTitle">Etapa</h3>
+    <div id="modalContent" class="muted">Contenido</div>
+  </div>
+
+<script>
+/*
+  Simulador de Evolución Estelar — index.html
+  Actualizaciones: Escalas del Diagrama H-R Dinámicas (Ajustadas por Masa).
+*/
+
+/* ------------ Configuración / modelos simplificados ------------ */
+
+const STAGE_DEFINITIONS = [
+  { id: 'protostar', title: 'Protostar', description: 'Colapso del gas y polvo en una densa nube. Temperatura y luminosidad aumentan rápidamente a medida que se contrae, pero es una fase breve en la vida de una estrella.', durationFactor: 0.02 },
+  { id: 'mainseq', title: 'Secuencia Principal', description: 'Fase más larga y estable de la vida estelar. La estrella fusiona hidrógeno en helio en su núcleo, manteniendo un equilibrio entre la gravedad y la presión de la radiación. Nuestro Sol se encuentra en esta etapa.', durationFactor: 0.75 },
+  { id: 'giant', title: 'Gigante Roja / Supergigante', description: 'Después de agotar el hidrógeno en su núcleo, la estrella se expande enormemente. Las estrellas de baja a mediana masa se convierten en Gigantes Rojas, mientras que las de alta masa se transforman en Supergigantes, volviéndose mucho más grandes y luminosas.', durationFactor: 0.15 },
+  { id: 'rag', title: 'Rama Asintótica de Gigantes (RAG)', description: 'Etapa avanzada para estrellas de masa baja e intermedia. Continúa la fusión nuclear en capas alrededor de un núcleo inerte, lo que provoca que la estrella se expanda y contraiga, expulsando material al espacio en pulsos térmicos.', durationFactor: 0.05 },
+  { id: 'final', title: 'Etapa Final', description: 'El remanente final de la estrella. Dependiendo de su masa inicial, puede convertirse en una Enana Blanca (para estrellas pequeñas/medianas), una Estrella de Neutrones (para estrellas de masa alta después de una supernova), o un Agujero Negro (para las estrellas más masivas).', durationFactor: 0.03 }
+];
+
+/* Mapas para decidir si incluir RAG según masa (por simplicidad): */
+function usesRAG(mass){
+  return mass >= 0.8 && mass < 8;
+}
+
+const SIMULATION_REAL_YEARS = 1e10; 
+const SIMULATION_DISPLAY_SECONDS = 120; 
+
+let SIM_SPEED_FACTOR = 1.0; 
+const BASE_YEARS_PER_SECOND = SIMULATION_REAL_YEARS / SIMULATION_DISPLAY_SECONDS;
+
+/* Umbrales finales (M☉) */
+const FINAL_THRESHOLDS = [
+  { max: 8, final: 'Enana Blanca' },
+  { max: 20, final: 'Estrella de Neutrones' },
+  { max: Infinity, final: 'Agujero Negro' }
+];
+
+/* Funciones simplificadas (educativas) para temperatura y luminosidad. */
+function tempFor(stageId, mass, progressStage){
+  const baseTemp = 3000 + Math.log10(mass+0.1) * 4000; 
+  switch(stageId){
+    case 'protostar':
+      return baseTemp * (0.8 + 0.6 * progressStage);
+    case 'mainseq':
+      return baseTemp + (mass ** 0.5) * 3500 * (1 - 0.15 * progressStage);
+    case 'giant':
+      return Math.max(2500, baseTemp * (0.5 - 0.35 * progressStage));
+    case 'rag':
+      return Math.max(2000, baseTemp * (0.45 - 0.2 * progressStage));
+    case 'final':
+      if (mass < 8) return 10000 + Math.random()*20000; 
+      if (mass < 20) return 1e6; 
+      return 1e4; 
+    default:
+      return baseTemp;
+  }
+}
+
+function lumFor(stageId, mass, progressStage){
+  const msLum = Math.max(0.01, Math.pow(mass, 3.5));
+  switch(stageId){
+    case 'protostar':
+      return 0.1 * msLum * (0.5 + progressStage);
+    case 'mainseq':
+      return msLum * (1 + 0.25 * progressStage);
+    case 'giant':
+      return msLum * (5 + 10 * progressStage);
+    case 'rag':
+      return msLum * (2 + 8 * progressStage);
+    case 'final':
+      if (mass < 8) return 0.01; 
+      if (mass < 20) return 0.001; 
+      return 0.0001; 
+    default:
+      return msLum;
+  }
+}
+
+// NUEVA FUNCIÓN: Determina los límites de escala H-R basados en la masa.
+function getScaleLimitsForMass(mass) {
+    let tempMin = 2000;
+    let tempMax = 50000;
+    let lumMin = 1e-4;
+    let lumMax = 1e6;
+    
+    if (mass <= 1.5) { // Estrellas de baja masa (como el Sol o menos)
+        tempMin = 2500;
+        tempMax = 20000;
+        lumMin = 1e-4;
+        lumMax = 1000;
+    } else if (mass <= 8) { // Estrellas de masa intermedia
+        tempMin = 3000;
+        tempMax = 35000;
+        lumMin = 0.1;
+        lumMax = 1e5;
+    } else { // Estrellas de alta masa (> 8 M☉)
+        tempMin = 5000;
+        tempMax = 50000;
+        lumMin = 10;
+        lumMax = 1e6;
+    }
+    
+    // Ajuste extra para asegurar que el punto final no quede fuera de la Enana Blanca.
+    if (mass < 8) {
+        lumMin = Math.min(lumMin, 0.005); 
+        tempMax = Math.max(tempMax, 30000); 
+    }
+
+    return { tempMin, tempMax, lumMin, lumMax };
+}
+
+
+/* ---------------- UI / Estado ---------------- */
+let massInput = document.getElementById('massInput');
+let massRange = document.getElementById('massRange');
+let startBtn = document.getElementById('startBtn');
+let pauseBtn = document.getElementById('pauseBtn');
+let resetBtn = document.getElementById('resetBtn');
+let exportBtn = document.getElementById('exportBtn');
+let downloadSample = document.getElementById('downloadSample');
+let explainBtn = document.getElementById('explainBtn');
+
+let speedBtns = document.querySelectorAll('.speed-btn');
+
+let currentStageLabel = document.getElementById('currentStage');
+let tempVal = document.getElementById('tempVal');
+let lumVal = document.getElementById('lumVal');
+let timeVal = document.getElementById('timeVal');
+let finalBadge = document.getElementById('finalBadge');
+
+let timelineEl = document.getElementById('timeline');
+let starSVG = document.getElementById('starSVG');
+
+let infoModal = document.getElementById('infoModal');
+let modalTitle = document.getElementById('modalTitle');
+let modalContent = document.getElementById('modalContent');
+let modalClose = document.getElementById('modalClose');
+
+// Referencia global al objeto Chart
+let hrChart = null; 
+
+massInput.addEventListener('input', syncMassFromInput);
+massRange.addEventListener('input', syncMassFromRange);
+
+function syncMassFromInput(e){
+  let v = parseFloat(e.target.value || 1.0);
+  if (isNaN(v)) v = 1.0;
+  if (v < 0.1) v = 0.1;
+  if (v > 100) v = 100;
+  massRange.value = v;
+  massInput.value = v;
+  rebuildTimeline();
+  updateChartScales(); // Llamar para ajustar escalas inmediatamente
+}
+function syncMassFromRange(e){
+  let v = parseFloat(e.target.value || 1.0);
+  massInput.value = v;
+  rebuildTimeline();
+  updateChartScales(); // Llamar para ajustar escalas inmediatamente
+}
+
+/* Stage sequence builder based on mass */
+function buildStagesForMass(mass){
+  let stages = [];
+  for (let def of STAGE_DEFINITIONS){
+    if (def.id === 'rag' && !usesRAG(mass)) continue;
+    stages.push(Object.assign({}, def));
+  }
+  const totalFactor = stages.reduce((s,st)=>s+st.durationFactor,0);
+  for (let st of stages){
+    st.durationYears = Math.max(1, Math.round(SIMULATION_REAL_YEARS * (st.durationFactor/totalFactor)));
+  }
+  return stages;
+}
+
+/* Decide final remnant label */
+function finalRemnantForMass(mass){
+  for (let t of FINAL_THRESHOLDS){
+    if (mass < t.max) return t.final;
+  }
+  return 'Agujero Negro'; 
+}
+
+/* Build timeline UI nodes */
+function rebuildTimeline(){
+  timelineEl.innerHTML = '';
+  const mass = parseFloat(massInput.value);
+  const stages = buildStagesForMass(mass);
+  const final = finalRemnantForMass(mass);
+  finalBadge.textContent = 'Final: ' + final;
+
+  stages.forEach((st, idx) => {
+    const node = document.createElement('div');
+    node.className = 'node';
+    node.dataset.stageId = st.id;
+    node.dataset.index = idx;
+    node.innerHTML = `
+      <button class="info-btn" title="Info" aria-label="Info">ℹ️</button>
+      <div>
+        <span class="title">${st.title}</span>
+        <span class="label">${(st.durationYears/1e6).toFixed(1)}M yrs</span>
+      </div>
+    `;
+    timelineEl.appendChild(node);
+
+    // info button
+    node.querySelector('.info-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      showModal(st.title, st.description);
+    });
+  });
+
+  highlightNode(0);
+}
+
+function highlightNode(index){
+  const nodes = timelineEl.querySelectorAll('.node');
+  nodes.forEach((n,i)=>{
+    n.classList.toggle('active', i===index);
+  });
+}
+
+/* Modal */
+function showModal(title, content){
+  modalTitle.textContent = title;
+  modalContent.textContent = content;
+  infoModal.classList.add('show');
+  infoModal.setAttribute('aria-hidden','false');
+}
+modalClose.addEventListener('click', () => {
+  infoModal.classList.remove('show');
+  infoModal.setAttribute('aria-hidden','true');
+});
+
+/* ---------------- Chart (Chart.js) - DIAGRAMA H-R ---------------- */
+const ctx = document.getElementById('hrChart').getContext('2d');
+
+const hrData = {
+  datasets: [
+    { 
+      label: 'Trayectoria estelar', 
+      data: [], 
+      showLine: true,
+      fill: false,
+      tension: 0.1,
+      borderColor: 'rgba(124,199,255, 0.5)', 
+      borderWidth: 2, 
+      pointRadius: 2, 
+      pointBackgroundColor: 'rgba(255,255,255,0.4)',
+      pointBorderColor: 'transparent',
+    },
+    { 
+      label: 'Estrella actual', 
+      data: [], 
+      backgroundColor: 'rgba(255,255,255,1)', 
+      borderColor: 'rgba(255,154,162,1)', 
+      borderWidth: 2,
+      pointRadius: 8,
+      pointHoverRadius: 10
+    }
+  ]
+};
+
+// Inicialización de Chart con configuración base (se actualizará con updateChartScales)
+hrChart = new Chart(ctx, {
+  type: 'scatter',
+  data: hrData,
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { labels: { color: '#e6eef8' } },
+      title: { display: false }
+    },
+    scales: {
+      x: { 
+        title: { display: true, text: 'Temperatura Superficial (K)', color: 'var(--muted)' },
+        type: 'logarithmic',
+        min: 2000, 
+        max: 50000,
+        reverse: true,
+        grid: { color: 'rgba(255,255,255,0.05)' },
+        ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
+            if (Math.log10(value) % 1 === 0 && value >= 1000) return formatNumber(value);
+            if (value >= 10000 && (value / 5000) % 1 === 0) return formatNumber(value);
+            return null;
+        } }
+      },
+      y: { 
+        title: { display: true, text: 'Luminosidad (L☉)', color: 'var(--muted)' },
+        type: 'logarithmic',
+        min: 1e-4,
+        max: 1e6, 
+        grid: { color: 'rgba(255,255,255,0.05)' },
+        ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
+            if (Math.log10(value) % 1 === 0) return formatNumber(value);
+            return null; 
+        } }
+      }
+    }
+  }
+});
+
+
+// FUNCIÓN CLAVE: Actualiza los límites de los ejes X y Y.
+function updateChartScales() {
+    if (!hrChart) return;
+    const mass = parseFloat(massInput.value);
+    const limits = getScaleLimitsForMass(mass);
+    
+    // Actualizar límites del Eje X (Temperatura)
+    hrChart.options.scales.x.min = limits.tempMin;
+    hrChart.options.scales.x.max = limits.tempMax;
+    
+    // Actualizar límites del Eje Y (Luminosidad)
+    hrChart.options.scales.y.min = limits.lumMin;
+    hrChart.options.scales.y.max = limits.lumMax;
+    
+    hrChart.update('none'); // Usar 'none' para actualizar solo la configuración sin transiciones
+}
+
+/* ---------------- Simulation loop ---------------- */
+let simState = {
+  running: false,
+  startTimestamp: null,
+  elapsedAnimSeconds: 0,
+  elapsedRealYears: 0,
+  lastTick: null,
+  stageIndex: 0,
+  stageProgress: 0,
+  timelineStages: [],
+  records: [] 
+};
+
+function initializeSimulation(){
+  stopSimulationLoop();
+  simState.running = false;
+  simState.startTimestamp = null;
+  simState.elapsedAnimSeconds = 0;
+  simState.elapsedRealYears = 0;
+  simState.lastTick = null;
+  simState.stageIndex = 0;
+  simState.stageProgress = 0;
+  simState.records = [];
+  
+  // Limpiar y resetear el gráfico H-R
+  hrChart.data.datasets[0].data = []; // Trayectoria
+  hrChart.data.datasets[1].data = []; // Punto actual
+  hrChart.update();
+  
+  rebuildTimeline();
+  updateStarVisual('protostar', parseFloat(massInput.value), 0);
+  updateChartScales(); // Asegurar que las escalas se ajusten al reset
+  
+  currentStageLabel.textContent = '—';
+  tempVal.textContent = '— K';
+  lumVal.textContent = '— L☉';
+  timeVal.textContent = '0 yr';
+}
+
+function startSimulation(){
+  if (simState.running) return;
+  
+  const mass = parseFloat(massInput.value);
+  if (!simState.timelineStages || simState.timelineStages.length === 0){
+    simState.timelineStages = buildStagesForMass(mass);
+    simState.totalYears = simState.timelineStages.reduce((s,st)=>s+st.durationYears,0);
+  }
+  
+  simState.running = true;
+  simState.startTimestamp = performance.now();
+  simState.lastTick = performance.now();
+  requestAnimationFrame(simulationStep);
+  startBtn.disabled = true;
+  pauseBtn.disabled = false;
+}
+
+function pauseSimulation(){
+  simState.running = false;
+  startBtn.disabled = false;
+  pauseBtn.disabled = true;
+}
+
+function stopSimulationLoop(){
+  simState.running = false;
+  startBtn.disabled = false;
+  pauseBtn.disabled = true; 
+}
+
+/* Simulation step uses real time deltas to update animated progress */
+function simulationStep(ts){
+  if (!simState.running) return;
+
+  const mass = parseFloat(massInput.value);
+  const now = performance.now();
+  const dt_ms = now - simState.lastTick;
+  simState.lastTick = now;
+
+  const yearsPerSecond = BASE_YEARS_PER_SECOND * SIM_SPEED_FACTOR;
+
+  simState.elapsedAnimSeconds += dt_ms / 1000;
+  simState.elapsedRealYears = simState.elapsedAnimSeconds * yearsPerSecond;
+
+  let cum = 0;
+  let idx = 0;
+  for (let i=0;i<simState.timelineStages.length;i++){
+    const st = simState.timelineStages[i];
+    if (simState.elapsedRealYears < cum + st.durationYears){
+      idx = i;
+      break;
+    }
+    cum += st.durationYears;
+    if (i === simState.timelineStages.length - 1) { idx = i; }
+  }
+
+  simState.stageIndex = idx;
+  const stage = simState.timelineStages[idx];
+  const stageElapsed = simState.elapsedRealYears - cum;
+  simState.stageProgress = Math.max(0, Math.min(1, stageElapsed / stage.durationYears));
+
+  // Compute observables
+  const temp = Math.round(tempFor(stage.id, mass, simState.stageProgress));
+  const lum = Number(lumFor(stage.id, mass, simState.stageProgress).toFixed(4));
+  const displayTime = Math.round(simState.elapsedRealYears);
+
+  // Update UI
+  currentStageLabel.textContent = stage.title;
+  tempVal.textContent = `${formatNumber(temp)} K`;
+  lumVal.textContent = `${formatNumber(lum)} L☉`;
+  timeVal.textContent = `${formatNumber(displayTime)} yr`;
+
+  highlightNode(simState.stageIndex);
+  updateStarVisual(stage.id, mass, simState.stageProgress);
+
+  // Update Chart (Diagrama H-R)
+  const hrPoint = { x: temp, y: lum };
+
+  if (!simState._lastRecord || (now - simState._lastRecord) > 200){
+    simState.records.push({
+      year: Math.round(simState.elapsedRealYears),
+      stage: stage.id,
+      stageTitle: stage.title,
+      temp: temp,
+      lum: lum
+    });
+    simState._lastRecord = now;
+
+    hrChart.data.datasets[0].data.push(hrPoint);
+    
+    if (stage.id !== 'final' || mass >= 8) { 
+        hrChart.data.datasets[1].data = [hrPoint];
+    } else {
+         if (hrChart.data.datasets[1].data.length === 0) hrChart.data.datasets[1].data = [hrPoint];
+    }
+    
+    hrChart.update('none');
+  } else {
+    hrChart.data.datasets[1].data = [hrPoint];
+    hrChart.update('none');
+  }
+
+
+  // Termination condition
+  if (simState.elapsedRealYears >= simState.totalYears){
+    simState.running = false;
+    startBtn.disabled = false;
+    pauseBtn.disabled = true;
+    finalBadge.textContent = 'Final: ' + finalRemnantForMass(mass);
+    currentStageLabel.textContent = simState.timelineStages[simState.timelineStages.length-1].title;
+    highlightNode(simState.timelineStages.length-1);
+
+    const finalStage = simState.timelineStages[simState.timelineStages.length-1];
+    const finalTemp = Math.round(tempFor(finalStage.id, mass, 1));
+    const finalLum = Number(lumFor(finalStage.id, mass, 1).toFixed(4));
+
+    simState.records.push({
+      year: Math.round(simState.elapsedRealYears),
+      stage: finalStage.id,
+      stageTitle: finalStage.title,
+      temp: finalTemp,
+      lum: finalLum
+    });
+
+    hrChart.data.datasets[1].data = [{ x: finalTemp, y: finalLum }];
+    hrChart.update('none');
+    return;
+  }
+
+  // continue
+  requestAnimationFrame(simulationStep);
+}
+
+/* ---------------- Utilities ---------------- */
+function formatNumber(n){
+  if (typeof n === 'number' && !Number.isFinite(n)) return 'Inf';
+  if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
+  if (n < 1000 && !Number.isInteger(n) && n.toString().includes('.')) return n.toFixed(2).replace(/\.0+$/, '');
+  return n.toString();
+}
+
+/* ---------------- Star visual (SVG) ---------------- */
+function updateStarVisual(stageId, mass, progress){
+  const svg = starSVG;
+  const w = 200, h = 200; 
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.innerHTML = '';
+
+  let color = '#fff1c9';
+  let radius = 30 + Math.min(80, Math.log10(mass+1)*15); 
+
+  switch(stageId){
+    case 'protostar':
+      color = '#ffd28a';
+      radius *= 0.9 + 0.2 * progress;
+      break;
+    case 'mainseq':
+      const t = Math.min(1, (mass/20));
+      color = interpColor('#ffe9b0','#cfeeff', t);
+      radius *= 0.8 + 0.4 * Math.log10(mass+1);
+      break;
+    case 'giant':
+      color = '#ffb3a7'; 
+      radius *= 1.8 + 0.6 * progress; 
+      break;
+    case 'rag':
+      color = '#ffddb1';
+      radius *= 1.6 + 0.5 * progress;
+      break;
+    case 'final':
+      if (mass < 8){
+        color = '#e7f6ff'; radius = 18; 
+      } else if (mass < 20){
+        color = '#cfe7ff'; radius = 5; 
+      } else {
+        color = '#000000'; radius = 12; 
+      }
+      break;
+  }
+
+  // glow filter
+  svg.innerHTML += `
+    <defs>
+      <radialGradient id="g1" cx="50%" cy="45%">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.95" />
+        <stop offset="50%" stop-color="${color}" stop-opacity="0.6" />
+        <stop offset="100%" stop-color="${color}" stop-opacity="0.08" />
+      </radialGradient>
+      <filter id="f1" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="16" result="b"/> 
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+  `;
+
+  if (stageId === 'final' && mass >= 20){
+    // black hole rendering: dark circle + bright accretion ring
+    svg.innerHTML += `
+      <circle cx="${w/2}" cy="${h/2}" r="${radius}" fill="#040405" stroke="#0f1724" stroke-width="1.5"/>
+      <ellipse cx="${w/2}" cy="${h/2}" rx="${radius*2.8}" ry="${radius*0.9}" fill="none" stroke="#ffb27e" stroke-opacity="0.45" stroke-width="${radius*0.4}"/>
+      <text x="${w/2}" y="${h-18}" text-anchor="middle" fill="#cbdfff" font-size="12">Agujero Negro</text>
+    `;
+  } else {
+    svg.innerHTML += `
+      <g filter="url(#f1)">
+        <circle cx="${w/2}" cy="${h/2}" r="${radius}" fill="url(#g1)"/>
+      </g>
+      <circle cx="${w/2}" cy="${h/2}" r="${Math.max(2, radius*0.6)}" fill="${color}" opacity="0.9"/>
+      <text x="${w/2}" y="${h-18}" text-anchor="middle" fill="#cbdfff" font-size="12">${stageLabelFor(stageId)}</text>
+    `;
+  }
+}
+
+/* helper: produce human label */
+function stageLabelFor(id){
+  const st = STAGE_DEFINITIONS.find(s=>s.id===id);
+  return st ? st.title : id;
+}
+
+/* color interpolation between two hex colors (t in 0..1) */
+function interpColor(a, b, t){
+  function hexToRgb(hex){
+    hex = hex.replace('#','');
+    return [parseInt(hex.substr(0,2),16), parseInt(hex.substr(2,2),16), parseInt(hex.substr(4,2),16)];
+  }
+  function rgbToHex([r,g,b]){ return '#' + [r,g,b].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+  const ra = hexToRgb(a), rb = hexToRgb(b);
+  const r = Math.round(ra[0] + (rb[0]-ra[0])*t);
+  const g = Math.round(ra[1] + (rb[1]-ra[1])*t);
+  const bl = Math.round(ra[2] + (rb[2]-ra[2])*t);
+  return rgbToHex([r,g,bl]);
+}
+
+/* ---------------- Export CSV ---------------- */
+function exportCSV(){
+  if (!simState.records || simState.records.length === 0){
+    alert('No hay datos para exportar. Ejecuta la simulación primero.');
+    return;
+  }
+  const header = ['year','stageId','stageTitle','temperature_K','luminosity_Lsun'];
+  const rows = simState.records.map(r => [r.year, r.stage, r.stageTitle, r.temp, r.lum]);
+  let csv = header.join(',') + '\n' + rows.map(r=> r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
+
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `evolucion_estelar_mass_${massInput.value}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
+/* sample CSV download (small sample) */
+function downloadSampleCSV(){
+  const sample = [
+    ['year','stageId','stageTitle','temperature_K','luminosity_Lsun'],
+    ['0','protostar','Protostar','4200','0.12'],
+    ['10000000','mainseq','Secuencia Principal','5800','1.0'],
+    ['5000000000','giant','Gigante Roja','3500','1200'],
+    ['6000000000','final','Enana Blanca','15000','0.02']
+  ];
+  const csv = sample.map(r=> r.map(c=> `"${c}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ejemplo_evolucion_estelar.csv';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
+/* ---------------- Event bindings ---------------- */
+startBtn.addEventListener('click', startSimulation);
+pauseBtn.addEventListener('click', pauseSimulation);
+resetBtn.addEventListener('click', initializeSimulation);
+exportBtn.addEventListener('click', exportCSV);
+downloadSample.addEventListener('click', downloadSampleCSV);
+explainBtn.addEventListener('click', ()=>{
+  showModal('Cómo funciona', 'La simulación es pedagógica: toma la masa inicial, construye una secuencia de etapas (Protostar → Secuencia Principal → Gigante/RAG → Final) y recorre esas etapas en tiempo "acelerado". Las magnitudes (Temperatura, Luminosidad) son calculadas mediante funciones simplificadas que sirven para mostrar tendencias generales. El Diagrama H-R muestra esta evolución de forma astrofísica. Las escalas del diagrama se ajustan automáticamente a la masa seleccionada para mejorar la visualización de la trayectoria.');
+});
+
+
+// Lógica de control de velocidad
+speedBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const speed = parseFloat(btn.dataset.speed);
+        SIM_SPEED_FACTOR = speed;
+        
+        speedBtns.forEach(b => {
+            b.classList.remove('speed-active');
+            b.classList.add('ghost');
+        });
+        btn.classList.add('speed-active');
+        btn.classList.remove('ghost');
+    });
+});
+
+
+/* initialize */
+initializeSimulation();
+rebuildTimeline();
+updateChartScales(); // Llamar al inicio para configurar las escalas con la masa inicial de 1.0
+
+/* Accessibility: keyboard to close modal */
+document.addEventListener('keydown', (e)=>{
+  if (e.key === 'Escape') {
+    infoModal.classList.remove('show');
+  }
+});
+
+</script>
+</body>
+</html>
