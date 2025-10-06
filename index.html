@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Simulador de Evolución Estelar — Diagrama H-R Dinámico</title>
+<title>Simulador de Evolución Estelar — Diagrama H-R Dinámico (Mejorado)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
@@ -28,7 +28,7 @@
                 var(--bg);
     color:#e6eef8;
     -webkit-font-smoothing:antialiased;
-    -moz-osx-osx-font-smoothing:grayscale;
+    -moz-osx-osx-smoothing:grayscale;
   }
 
   .container{
@@ -70,9 +70,6 @@
     font-size:14px;
   }
   input[type="range"]{ width:160px; }
-  /* Nuevo estilo para el slider de temperatura (ancho total) */
-  input[type="range"]#tempRange{ width:100%; margin-top:4px; } 
-
 
   button{
     padding:8px 12px;
@@ -101,8 +98,7 @@
 
   /* Left column specifics */
   .stats { margin-top:14px; display:grid; gap:8px; }
-  .stat-row{ display:flex; justify-content:space-between; font-size:14px; padding:8px; border-radius:8px; background: rgba(255,255,255,0.01); flex-direction: column; }
-  .stat-row > div { display: flex; justify-content: space-between; align-items: center; } /* Para el título y valor */
+  .stat-row{ display:flex; justify-content:space-between; font-size:14px; padding:8px; border-radius:8px; background: rgba(255,255,255,0.01); }
   .stat-row small{ color:var(--muted); }
 
   .star-preview {
@@ -200,6 +196,15 @@
   /* small tip */
   .tip{ font-size:12px; color:var(--muted); margin-top:6px; }
 
+  /* screen-reader only */
+  .sr-only{ position:absolute !important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+  /* reduced-motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    .node { transition: none; }
+    .info-modal { transition: none; }
+  }
+
 </style>
 </head>
 <body>
@@ -212,7 +217,7 @@
         <label for="massInput" class="muted">Masa inicial (M☉)</label><br>
         <input id="massInput" type="number" min="0.1" max="100" step="0.1" value="1.0" aria-label="Masa inicial en masas solares">
         <div style="margin-top:8px;">
-          <input id="massRange" type="range" min="0.1" max="100" step="0.1" value="1.0">
+          <input id="massRange" type="range" min="0.1" max="100" step="0.1" value="1.0" role="slider" aria-valuemin="0.1" aria-valuemax="100" aria-valuenow="1.0">
         </div>
       </div>
 
@@ -221,6 +226,7 @@
         <button id="pauseBtn" class="ghost" disabled>⏸ Pausar</button>
         <button id="resetBtn" class="ghost">⟲ Reset</button>
         <button id="exportBtn" class="ghost">⬇️ Exportar CSV</button>
+        <button id="exportPNGBtn" class="ghost">🖼️ Exportar PNG</button>
       </div>
 
       <div class="speed-controls">
@@ -233,14 +239,7 @@
       </div>
       <div class="stats">
         <div class="stat-row"><div><small>Etapa actual</small><div id="currentStage" style="font-weight:700">—</div></div></div>
-        
-        <div class="stat-row">
-            <div>
-                <small>Temperatura superficial</small>
-                <div id="tempVal">— K</div>
-            </div>
-            <input id="tempRange" type="range" min="2000" max="50000" step="10" value="5778" disabled title="Temperatura Superficial">
-        </div>
+        <div class="stat-row"><div><small>Temperatura superficial</small><div id="tempVal">— K</div></div></div>
         <div class="stat-row"><div><small>Luminosidad</small><div id="lumVal">— L☉</div></div></div>
         <div class="stat-row"><div><small>Tiempo transcurrido</small><div id="timeVal">0 yr</div></div></div>
       </div>
@@ -253,7 +252,7 @@
 
         <div class="timeline" id="timeline">
           </div>
-        <div class="tip">Toca ℹ️ en cada etapa para leer la explicación didáctica.</div>
+        <div class="tip">Toca ℹ️ en cada etapa para leer la explicación didáctica. También podés pulsar Enter/Space sobre una etapa para saltar a ella.</div>
       </div>
 
     </div>
@@ -301,10 +300,18 @@
     <div id="modalContent" class="muted">Contenido</div>
   </div>
 
+  <div id="a11yLive" class="sr-only" aria-live="polite"></div>
+
 <script>
 /*
-  Simulador de Evolución Estelar — index.html
-  Actualizaciones: Escalas dinámicas corregidas + Slider de Temperatura.
+  Simulador de Evolución Estelar — index.html (Mejorado)
+  Cambios principales:
+   - Duración de etapas calculada según vida estelar estimada (M^-2.5).
+   - Eliminada aleatoriedad en temperatura final (determinista).
+   - Mejor manejo de requestAnimationFrame (guardamos/cancelamos rafId).
+   - Muestras/registro limitadas (intervalo configurable) y throttling de actualización de Chart.
+   - Accesibilidad: nodos focusables, aria-live, soporte teclado para saltar etapas.
+   - Export PNG, CSV con metadata, y otras mejoras de robustez.
 */
 
 /* ------------ Configuración / modelos simplificados ------------ */
@@ -317,16 +324,14 @@ const STAGE_DEFINITIONS = [
   { id: 'final', title: 'Etapa Final', description: 'El remanente final de la estrella. Dependiendo de su masa inicial, puede convertirse en una Enana Blanca (para estrellas pequeñas/medianas), una Estrella de Neutrones (para estrellas de masa alta después de una supernova), o un Agujero Negro (para las estrellas más masivas).', durationFactor: 0.03 }
 ];
 
-/* Mapas para decidir si incluir RAG según masa (por simplicidad): */
 function usesRAG(mass){
   return mass >= 0.8 && mass < 8;
 }
 
-const SIMULATION_REAL_YEARS = 1e10; 
-const SIMULATION_DISPLAY_SECONDS = 120; 
-
+// Ya no usamos una constante fija para SIMULATION_REAL_YEARS; calculamos la vida según masa.
+const SIMULATION_DISPLAY_SECONDS = 120; // duración de la animación por defecto
 let SIM_SPEED_FACTOR = 1.0; 
-const BASE_YEARS_PER_SECOND = SIMULATION_REAL_YEARS / SIMULATION_DISPLAY_SECONDS;
+const BASE_YEARS_PER_SECOND = null; // se calculará dinámicamente en initialize/start según la vida estimada
 
 /* Umbrales finales (M☉) */
 const FINAL_THRESHOLDS = [
@@ -334,6 +339,12 @@ const FINAL_THRESHOLDS = [
   { max: 20, final: 'Estrella de Neutrones' },
   { max: Infinity, final: 'Agujero Negro' }
 ];
+
+/* Registro / muestreo */
+const RECORD_INTERVAL_YEARS = 10000; // solo guardar cada N años (ajustable)
+const CHART_UPDATE_THROTTLE_MS = 150; // actualizar chart cada N ms como máximo
+
+let rafId = null; // id de requestAnimationFrame para poder cancelarlo
 
 /* Funciones simplificadas (educativas) para temperatura y luminosidad. */
 function tempFor(stageId, mass, progressStage){
@@ -348,7 +359,7 @@ function tempFor(stageId, mass, progressStage){
     case 'rag':
       return Math.max(2000, baseTemp * (0.45 - 0.2 * progressStage));
     case 'final':
-      if (mass < 8) return 10000 + Math.random()*20000; 
+      if (mass < 8) return Math.round(8000 + 7000 * Math.pow(mass / 8, 0.6)); // determinista
       if (mass < 20) return 1e6; 
       return 1e4; 
     default:
@@ -376,7 +387,15 @@ function lumFor(stageId, mass, progressStage){
   }
 }
 
-// FUNCIÓN DE ESCALADO CORREGIDA
+// Estimación simple de la vida de la estrella (años) usando la relación empírica ~ M^-2.5
+function stellarLifetimeYears(mass){
+  // Normalizamos para que 1 M☉ ~ 1e10 años
+  const lifetime = 1e10 * Math.pow(mass, -2.5);
+  // Limitar a rangos sensatos
+  return Math.min(Math.max(lifetime, 1e6), 1e11);
+}
+
+// FUNCIÓN CORREGIDA: Determina los límites de escala H-R basados en la masa.
 function getScaleLimitsForMass(mass) {
     let tempMin = 2000;
     let tempMax = 50000;
@@ -397,10 +416,9 @@ function getScaleLimitsForMass(mass) {
         tempMin = 5000;
         tempMax = 50000;
         lumMin = 100; 
-        lumMax = 1e9; // Rango máximo para M=100
+        lumMax = 1e9; // 1,000,000,000 L☉
     }
     
-    // Ajuste extra para asegurar que el punto final no quede fuera de la Enana Blanca.
     if (mass < 8) {
         lumMin = Math.min(lumMin, 0.005); 
         tempMax = Math.max(tempMax, 30000); 
@@ -409,7 +427,6 @@ function getScaleLimitsForMass(mass) {
     return { tempMin, tempMax, lumMin, lumMax };
 }
 
-
 /* ---------------- UI / Estado ---------------- */
 let massInput = document.getElementById('massInput');
 let massRange = document.getElementById('massRange');
@@ -417,6 +434,7 @@ let startBtn = document.getElementById('startBtn');
 let pauseBtn = document.getElementById('pauseBtn');
 let resetBtn = document.getElementById('resetBtn');
 let exportBtn = document.getElementById('exportBtn');
+let exportPNGBtn = document.getElementById('exportPNGBtn');
 let downloadSample = document.getElementById('downloadSample');
 let explainBtn = document.getElementById('explainBtn');
 
@@ -424,13 +442,13 @@ let speedBtns = document.querySelectorAll('.speed-btn');
 
 let currentStageLabel = document.getElementById('currentStage');
 let tempVal = document.getElementById('tempVal');
-let tempRange = document.getElementById('tempRange'); // Nuevo
 let lumVal = document.getElementById('lumVal');
 let timeVal = document.getElementById('timeVal');
 let finalBadge = document.getElementById('finalBadge');
 
 let timelineEl = document.getElementById('timeline');
 let starSVG = document.getElementById('starSVG');
+let a11yLive = document.getElementById('a11yLive');
 
 let infoModal = document.getElementById('infoModal');
 let modalTitle = document.getElementById('modalTitle');
@@ -455,6 +473,7 @@ function syncMassFromInput(e){
 function syncMassFromRange(e){
   let v = parseFloat(e.target.value || 1.0);
   massInput.value = v;
+  massRange.setAttribute('aria-valuenow', v);
   rebuildTimeline();
   updateChartScales(); 
 }
@@ -466,9 +485,10 @@ function buildStagesForMass(mass){
     if (def.id === 'rag' && !usesRAG(mass)) continue;
     stages.push(Object.assign({}, def));
   }
+  const lifetime = stellarLifetimeYears(mass);
   const totalFactor = stages.reduce((s,st)=>s+st.durationFactor,0);
   for (let st of stages){
-    st.durationYears = Math.max(1, Math.round(SIMULATION_REAL_YEARS * (st.durationFactor/totalFactor)));
+    st.durationYears = Math.max(1, Math.round(lifetime * (st.durationFactor/totalFactor)));
   }
   return stages;
 }
@@ -494,6 +514,10 @@ function rebuildTimeline(){
     node.className = 'node';
     node.dataset.stageId = st.id;
     node.dataset.index = idx;
+    node.setAttribute('tabindex','0');
+    node.setAttribute('role','button');
+    node.setAttribute('aria-label', `${st.title}, duración ${(st.durationYears/1e6).toFixed(2)} millones de años`);
+
     node.innerHTML = `
       <button class="info-btn" title="Info" aria-label="Info">ℹ️</button>
       <div>
@@ -507,6 +531,15 @@ function rebuildTimeline(){
     node.querySelector('.info-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       showModal(st.title, st.description);
+    });
+
+    // click to seek to that stage
+    node.addEventListener('click', () => seekToStage(idx));
+
+    // keyboard support: Enter/Space -> seek; I for info
+    node.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); seekToStage(idx); }
+      if (e.key.toLowerCase() === 'i') { e.preventDefault(); showModal(st.title, st.description); }
     });
   });
 
@@ -561,6 +594,12 @@ const hrData = {
   ]
 };
 
+function isPowerOfTen(v){
+  if (!isFinite(v) || v <= 0) return false;
+  const e = Math.log10(v);
+  return Math.abs(e - Math.round(e)) < 1e-9;
+}
+
 // Inicialización de Chart con configuración base (se actualizará con updateChartScales)
 hrChart = new Chart(ctx, {
   type: 'scatter',
@@ -580,10 +619,9 @@ hrChart = new Chart(ctx, {
         max: 50000,
         reverse: true,
         grid: { color: 'rgba(255,255,255,0.05)' },
-        ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
-            if (Math.log10(value) % 1 === 0 && value >= 1000) return formatNumber(value);
-            if (value >= 10000 && (value / 5000) % 1 === 0) return formatNumber(value);
-            return null;
+        ticks: { color: 'var(--muted)', callback: function(value) { 
+            if (isPowerOfTen(Number(value))) return formatNumber(Number(value));
+            return '';
         } }
       },
       y: { 
@@ -592,9 +630,9 @@ hrChart = new Chart(ctx, {
         min: 1e-4,
         max: 1e6, 
         grid: { color: 'rgba(255,255,255,0.05)' },
-        ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
-            if (Math.log10(value) % 1 === 0) return formatNumber(value);
-            return null; 
+        ticks: { color: 'var(--muted)', callback: function(value) { 
+            if (isPowerOfTen(Number(value))) return formatNumber(Number(value));
+            return '';
         } }
       }
     }
@@ -608,17 +646,11 @@ function updateChartScales() {
     const mass = parseFloat(massInput.value);
     const limits = getScaleLimitsForMass(mass);
     
-    // Actualizar límites del Eje X (Temperatura)
     hrChart.options.scales.x.min = limits.tempMin;
     hrChart.options.scales.x.max = limits.tempMax;
     
-    // Actualizar límites del Eje Y (Luminosidad)
     hrChart.options.scales.y.min = limits.lumMin;
     hrChart.options.scales.y.max = limits.lumMax;
-    
-    // Ajustar los límites del slider de Temperatura
-    tempRange.min = limits.tempMin;
-    tempRange.max = limits.tempMax;
     
     hrChart.update('none'); 
 }
@@ -633,11 +665,14 @@ let simState = {
   stageIndex: 0,
   stageProgress: 0,
   timelineStages: [],
-  records: [] 
+  records: [],
+  _lastRecordedYear: -Infinity,
+  _lastChartUpdate: 0,
+  totalYears: 0
 };
 
 function initializeSimulation(){
-  stopSimulationLoop();
+  if (rafId !== null) cancelAnimationFrame(rafId);
   simState.running = false;
   simState.startTimestamp = null;
   simState.elapsedAnimSeconds = 0;
@@ -646,48 +681,60 @@ function initializeSimulation(){
   simState.stageIndex = 0;
   simState.stageProgress = 0;
   simState.records = [];
+  simState._lastRecordedYear = -Infinity;
+  simState._lastChartUpdate = 0;
+  simState.totalYears = 0;
+  rafId = null;
   
-  // Limpiar y resetear el gráfico H-R
-  hrChart.data.datasets[0].data = []; // Trayectoria
-  hrChart.data.datasets[1].data = []; // Punto actual
+  hrChart.data.datasets[0].data = [];
+  hrChart.data.datasets[1].data = [];
   hrChart.update();
   
   rebuildTimeline();
   updateStarVisual('protostar', parseFloat(massInput.value), 0);
-  updateChartScales(); // Asegurar que las escalas se ajusten al reset
+  updateChartScales(); 
   
   currentStageLabel.textContent = '—';
   tempVal.textContent = '— K';
-  tempRange.value = tempRange.min; // Resetear el slider
   lumVal.textContent = '— L☉';
   timeVal.textContent = '0 yr';
+  a11yLive.textContent = '';
 }
 
 function startSimulation(){
   if (simState.running) return;
-  
   const mass = parseFloat(massInput.value);
   if (!simState.timelineStages || simState.timelineStages.length === 0){
     simState.timelineStages = buildStagesForMass(mass);
     simState.totalYears = simState.timelineStages.reduce((s,st)=>s+st.durationYears,0);
   }
-  
+  // calcular BASE_YEARS_PER_SECOND dinámicamente según la vida total deseada (animación en SIMULATION_DISPLAY_SECONDS)
+  const yearsPerSecond = simState.totalYears / SIMULATION_DISPLAY_SECONDS; // si totalYears es pequeño, se ajusta
+  // Guardar en el estado para accesibilidad en seek
+  simState._yearsPerSecond = yearsPerSecond * SIM_SPEED_FACTOR;
+
   simState.running = true;
   simState.startTimestamp = performance.now();
   simState.lastTick = performance.now();
-  requestAnimationFrame(simulationStep);
+  // ajustar elapsedAnimSeconds para que siga desde el tiempo real actual si ya había un elapsedRealYears
+  simState.elapsedAnimSeconds = simState.elapsedRealYears / (yearsPerSecond * SIM_SPEED_FACTOR || 1);
+  rafId = requestAnimationFrame(simulationStep);
   startBtn.disabled = true;
   pauseBtn.disabled = false;
 }
 
 function pauseSimulation(){
   simState.running = false;
+  if (rafId !== null) cancelAnimationFrame(rafId);
+  rafId = null;
   startBtn.disabled = false;
   pauseBtn.disabled = true;
 }
 
 function stopSimulationLoop(){
   simState.running = false;
+  if (rafId !== null) cancelAnimationFrame(rafId);
+  rafId = null;
   startBtn.disabled = false;
   pauseBtn.disabled = true; 
 }
@@ -701,11 +748,20 @@ function simulationStep(ts){
   const dt_ms = now - simState.lastTick;
   simState.lastTick = now;
 
-  const yearsPerSecond = BASE_YEARS_PER_SECOND * SIM_SPEED_FACTOR;
+  const yearsPerSecond = simState._yearsPerSecond || (simState.totalYears / SIMULATION_DISPLAY_SECONDS) * SIM_SPEED_FACTOR;
 
   simState.elapsedAnimSeconds += dt_ms / 1000;
   simState.elapsedRealYears = simState.elapsedAnimSeconds * yearsPerSecond;
 
+  updateUIFromElapsed();
+
+  // continue
+  rafId = requestAnimationFrame(simulationStep);
+}
+
+/* Recalcula UI (etapa, chart point, etc.) a partir de simState.elapsedRealYears sin depender del loop */
+function updateUIFromElapsed(){
+  const mass = parseFloat(massInput.value);
   let cum = 0;
   let idx = 0;
   for (let i=0;i<simState.timelineStages.length;i++){
@@ -723,25 +779,21 @@ function simulationStep(ts){
   const stageElapsed = simState.elapsedRealYears - cum;
   simState.stageProgress = Math.max(0, Math.min(1, stageElapsed / stage.durationYears));
 
-  // Compute observables
   const temp = Math.round(tempFor(stage.id, mass, simState.stageProgress));
   const lum = Number(lumFor(stage.id, mass, simState.stageProgress).toFixed(4));
   const displayTime = Math.round(simState.elapsedRealYears);
 
-  // Update UI
   currentStageLabel.textContent = stage.title;
   tempVal.textContent = `${formatNumber(temp)} K`;
-  tempRange.value = temp; // Actualizar el slider de temperatura
   lumVal.textContent = `${formatNumber(lum)} L☉`;
   timeVal.textContent = `${formatNumber(displayTime)} yr`;
 
   highlightNode(simState.stageIndex);
   updateStarVisual(stage.id, mass, simState.stageProgress);
 
-  // Update Chart (Diagrama H-R)
-  const hrPoint = { x: temp, y: lum };
-
-  if (!simState._lastRecord || (now - simState._lastRecord) > 200){
+  // Decide si guardar registro (por intervalo de años)
+  if (Math.round(simState.elapsedRealYears) - simState._lastRecordedYear >= RECORD_INTERVAL_YEARS || simState.elapsedRealYears === 0){
+    simState._lastRecordedYear = Math.round(simState.elapsedRealYears);
     simState.records.push({
       year: Math.round(simState.elapsedRealYears),
       stage: stage.id,
@@ -749,26 +801,27 @@ function simulationStep(ts){
       temp: temp,
       lum: lum
     });
-    simState._lastRecord = now;
-
-    hrChart.data.datasets[0].data.push(hrPoint);
-    
-    if (stage.id !== 'final' || mass >= 8) { 
-        hrChart.data.datasets[1].data = [hrPoint];
-    } else {
-         if (hrChart.data.datasets[1].data.length === 0) hrChart.data.datasets[1].data = [hrPoint];
-    }
-    
-    hrChart.update('none');
-  } else {
-    hrChart.data.datasets[1].data = [hrPoint];
-    hrChart.update('none');
   }
 
+  // Update Chart (throttled por tiempo)
+  const nowMs = performance.now();
+  if (nowMs - simState._lastChartUpdate > CHART_UPDATE_THROTTLE_MS){
+    simState._lastChartUpdate = nowMs;
+    const hrPoint = { x: temp, y: lum };
+    hrChart.data.datasets[0].data.push(hrPoint);
+    hrChart.data.datasets[1].data = [hrPoint];
+    hrChart.update('none');
+  } else {
+    // actualizar solo el punto actual (sin push de trayectoria)
+    const hrPoint = { x: temp, y: lum };
+    hrChart.data.datasets[1].data = [hrPoint];
+  }
 
-  // Termination condition
+  // check termination
   if (simState.elapsedRealYears >= simState.totalYears){
     simState.running = false;
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    rafId = null;
     startBtn.disabled = false;
     pauseBtn.disabled = true;
     finalBadge.textContent = 'Final: ' + finalRemnantForMass(mass);
@@ -789,11 +842,9 @@ function simulationStep(ts){
 
     hrChart.data.datasets[1].data = [{ x: finalTemp, y: finalLum }];
     hrChart.update('none');
+    a11yLive.textContent = `Simulación completada. Remanente final: ${finalRemnantForMass(mass)}.`;
     return;
   }
-
-  // continue
-  requestAnimationFrame(simulationStep);
 }
 
 /* ---------------- Utilities ---------------- */
@@ -845,7 +896,6 @@ function updateStarVisual(stageId, mass, progress){
       break;
   }
 
-  // glow filter
   svg.innerHTML += `
     <defs>
       <radialGradient id="g1" cx="50%" cy="45%">
@@ -861,7 +911,6 @@ function updateStarVisual(stageId, mass, progress){
   `;
 
   if (stageId === 'final' && mass >= 20){
-    // black hole rendering: dark circle + bright accretion ring
     svg.innerHTML += `
       <circle cx="${w/2}" cy="${h/2}" r="${radius}" fill="#040405" stroke="#0f1724" stroke-width="1.5"/>
       <ellipse cx="${w/2}" cy="${h/2}" rx="${radius*2.8}" ry="${radius*0.9}" fill="none" stroke="#ffb27e" stroke-opacity="0.45" stroke-width="${radius*0.4}"/>
@@ -904,15 +953,17 @@ function exportCSV(){
     alert('No hay datos para exportar. Ejecuta la simulación primero.');
     return;
   }
+  const mass = parseFloat(massInput.value);
+  const headerMeta = `# Simulacion_Evolucion_Estelar\n# mass=${mass}\n# generated=${new Date().toISOString()}\n`;
   const header = ['year','stageId','stageTitle','temperature_K','luminosity_Lsun'];
   const rows = simState.records.map(r => [r.year, r.stage, r.stageTitle, r.temp, r.lum]);
-  let csv = header.join(',') + '\n' + rows.map(r=> r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
+  let csv = headerMeta + header.join(',') + '\n' + rows.map(r=> r.map(cell => `"${String(cell).replace(/"/g,'""') }"`).join(',')).join('\n');
 
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `evolucion_estelar_mass_${massInput.value}.csv`;
+  a.download = `evolucion_estelar_mass_${mass}.csv`;
   document.body.appendChild(a);
   a.click();
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
@@ -938,32 +989,64 @@ function downloadSampleCSV(){
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
 
+/* Export PNG of the chart */
+function exportPNG(){
+  try{
+    const url = hrChart.toBase64Image();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hr_mass_${massInput.value}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch(e){
+    alert('Error exportando PNG: ' + e.message);
+  }
+}
+
+/* ---------------- Seeking (click timeline) ---------------- */
+function seekToStage(index){
+  const stages = simState.timelineStages;
+  if (!stages || stages.length === 0) return;
+  let cum = 0;
+  for (let i=0;i<index;i++) cum += stages[i].durationYears;
+  simState.elapsedRealYears = cum;
+  // recalcular elapsedAnimSeconds de acuerdo a la tasa actual
+  const yearsPerSecond = simState._yearsPerSecond || (simState.totalYears / SIMULATION_DISPLAY_SECONDS) * SIM_SPEED_FACTOR;
+  simState.elapsedAnimSeconds = simState.elapsedRealYears / (yearsPerSecond || 1);
+  // si no está corriendo, actualizar inmediatamente la UI
+  updateUIFromElapsed();
+  a11yLive.textContent = `Salto a etapa ${stages[index].title}. Tiempo simulado ${formatNumber(Math.round(simState.elapsedRealYears))} años.`;
+}
+
 /* ---------------- Event bindings ---------------- */
 startBtn.addEventListener('click', startSimulation);
 pauseBtn.addEventListener('click', pauseSimulation);
 resetBtn.addEventListener('click', initializeSimulation);
 exportBtn.addEventListener('click', exportCSV);
+exportPNGBtn.addEventListener('click', exportPNG);
 downloadSample.addEventListener('click', downloadSampleCSV);
 explainBtn.addEventListener('click', ()=>{
   showModal('Cómo funciona', 'La simulación es pedagógica: toma la masa inicial, construye una secuencia de etapas (Protostar → Secuencia Principal → Gigante/RAG → Final) y recorre esas etapas en tiempo "acelerado". Las magnitudes (Temperatura, Luminosidad) son calculadas mediante funciones simplificadas que sirven para mostrar tendencias generales. El Diagrama H-R muestra esta evolución de forma astrofísica. Las escalas del diagrama se ajustan automáticamente a la masa seleccionada para mejorar la visualización de la trayectoria.');
 });
-
 
 // Lógica de control de velocidad
 speedBtns.forEach(btn => {
     btn.addEventListener('click', () => {
         const speed = parseFloat(btn.dataset.speed);
         SIM_SPEED_FACTOR = speed;
-        
         speedBtns.forEach(b => {
             b.classList.remove('speed-active');
             b.classList.add('ghost');
         });
         btn.classList.add('speed-active');
         btn.classList.remove('ghost');
+        // ajustar tasa si la simulación ya está preparada
+        if (simState.totalYears){
+          simState._yearsPerSecond = (simState.totalYears / SIMULATION_DISPLAY_SECONDS) * SIM_SPEED_FACTOR;
+        }
     });
 });
-
 
 /* initialize */
 initializeSimulation();
