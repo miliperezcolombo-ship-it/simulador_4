@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Simulador de Evolución Estelar — Diagrama H-R Dinámico (Mejorado)</title>
+<title>Simulador de Evolución Estelar — Diagrama H-R Dinámico (Con Pan de Temperatura)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
@@ -69,7 +69,7 @@
     color:inherit;
     font-size:14px;
   }
-  input[type="range"]{ width:160px; }
+  input[type="range"]{ width:100%; }
 
   button{
     padding:8px 12px;
@@ -245,6 +245,12 @@
       </div>
 
       <div style="margin-top:12px;">
+        <label for="tempPan" class="muted">Pan de Temperatura — Centro visible (log₁₀ K)</label><br>
+        <input id="tempPan" type="range" min="3.5" max="5.0" step="0.01" value="4.0" aria-label="Pan temperatura (log10 K)">
+        <div class="muted" id="tempPanLabel" style="margin-top:6px;">Centro visible: 10,000 K (span ~2 dex)</div>
+      </div>
+
+      <div style="margin-top:12px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div><small class="muted">Diagrama secuencial</small></div>
           <div class="badge" id="finalBadge">Final: —</div>
@@ -304,14 +310,12 @@
 
 <script>
 /*
-  Simulador de Evolución Estelar — index.html (Mejorado)
-  Cambios principales:
-   - Duración de etapas calculada según vida estelar estimada (M^-2.5).
-   - Eliminada aleatoriedad en temperatura final (determinista).
-   - Mejor manejo de requestAnimationFrame (guardamos/cancelamos rafId).
-   - Muestras/registro limitadas (intervalo configurable) y throttling de actualización de Chart.
-   - Accesibilidad: nodos focusables, aria-live, soporte teclado para saltar etapas.
-   - Export PNG, CSV con metadata, y otras mejoras de robustez.
+  Simulador de Evolución Estelar — index.html (Con Pan de Temperatura)
+  Cambios:
+   - Slider de pan en temperatura (log10 K) rango 3.5–5.0 (3000–100000 K)
+   - Duración de etapas según M^-2.5
+   - Eliminada aleatoriedad en temp final
+   - requestAnimationFrame robusto, throttling de chart, export PNG/CSV, a11y
 */
 
 /* ------------ Configuración / modelos simplificados ------------ */
@@ -328,10 +332,8 @@ function usesRAG(mass){
   return mass >= 0.8 && mass < 8;
 }
 
-// Ya no usamos una constante fija para SIMULATION_REAL_YEARS; calculamos la vida según masa.
-const SIMULATION_DISPLAY_SECONDS = 120; // duración de la animación por defecto
+const SIMULATION_DISPLAY_SECONDS = 120; // duración de animación
 let SIM_SPEED_FACTOR = 1.0; 
-const BASE_YEARS_PER_SECOND = null; // se calculará dinámicamente en initialize/start según la vida estimada
 
 /* Umbrales finales (M☉) */
 const FINAL_THRESHOLDS = [
@@ -341,10 +343,10 @@ const FINAL_THRESHOLDS = [
 ];
 
 /* Registro / muestreo */
-const RECORD_INTERVAL_YEARS = 10000; // solo guardar cada N años (ajustable)
-const CHART_UPDATE_THROTTLE_MS = 150; // actualizar chart cada N ms como máximo
+const RECORD_INTERVAL_YEARS = 10000; // guardar cada N años
+const CHART_UPDATE_THROTTLE_MS = 150; // intervalo mínimo entre updates del chart
 
-let rafId = null; // id de requestAnimationFrame para poder cancelarlo
+let rafId = null; // id de requestAnimationFrame
 
 /* Funciones simplificadas (educativas) para temperatura y luminosidad. */
 function tempFor(stageId, mass, progressStage){
@@ -389,9 +391,7 @@ function lumFor(stageId, mass, progressStage){
 
 // Estimación simple de la vida de la estrella (años) usando la relación empírica ~ M^-2.5
 function stellarLifetimeYears(mass){
-  // Normalizamos para que 1 M☉ ~ 1e10 años
   const lifetime = 1e10 * Math.pow(mass, -2.5);
-  // Limitar a rangos sensatos
   return Math.min(Math.max(lifetime, 1e6), 1e11);
 }
 
@@ -416,7 +416,7 @@ function getScaleLimitsForMass(mass) {
         tempMin = 5000;
         tempMax = 50000;
         lumMin = 100; 
-        lumMax = 1e9; // 1,000,000,000 L☉
+        lumMax = 1e9;
     }
     
     if (mass < 8) {
@@ -426,6 +426,7 @@ function getScaleLimitsForMass(mass) {
 
     return { tempMin, tempMax, lumMin, lumMax };
 }
+
 
 /* ---------------- UI / Estado ---------------- */
 let massInput = document.getElementById('massInput');
@@ -456,6 +457,8 @@ let modalContent = document.getElementById('modalContent');
 let modalClose = document.getElementById('modalClose');
 
 let hrChart = null; 
+let tempPan = document.getElementById('tempPan');
+let tempPanLabel = document.getElementById('tempPanLabel');
 
 massInput.addEventListener('input', syncMassFromInput);
 massRange.addEventListener('input', syncMassFromRange);
@@ -639,20 +642,58 @@ hrChart = new Chart(ctx, {
   }
 });
 
-
 // FUNCIÓN CLAVE: Actualiza los límites de los ejes X y Y.
 function updateChartScales() {
     if (!hrChart) return;
     const mass = parseFloat(massInput.value);
     const limits = getScaleLimitsForMass(mass);
-    
-    hrChart.options.scales.x.min = limits.tempMin;
-    hrChart.options.scales.x.max = limits.tempMax;
-    
+
+    // Actualizamos los límites Y normalmente
     hrChart.options.scales.y.min = limits.lumMin;
     hrChart.options.scales.y.max = limits.lumMax;
-    
-    hrChart.update('none'); 
+
+    // Actualizamos los límites del Eje X (Temperatura) pero permitimos 'pan' mediante el slider
+    updatePanSliderLimits(limits);
+    applyPanFromSlider(limits);
+
+    hrChart.update('none');
+}
+
+// Ajusta los límites y propiedades del slider de pan según los límites calculados
+function updatePanSliderLimits(limits){
+    if (!tempPan) return;
+    const minLog = Math.log10(Math.max(1, limits.tempMin));
+    const maxLog = Math.log10(Math.max(10, limits.tempMax * 1.5)); // margen extra
+    tempPan.min = minLog.toFixed(3);
+    tempPan.max = maxLog.toFixed(3);
+    // Si el valor actual está fuera de rango, colocarlo en el centro geométrico
+    const cur = parseFloat(tempPan.value || (minLog + maxLog)/2);
+    if (cur < parseFloat(tempPan.min) || cur > parseFloat(tempPan.max)){
+        tempPan.value = ((minLog + maxLog)/2).toFixed(3);
+    }
+    const center = Math.pow(10, parseFloat(tempPan.value));
+    tempPanLabel.textContent = `Centro visible: ${formatNumber(Math.round(center))} K (span ~2 dex)`;
+}
+
+// Lee el slider y aplica un rango visible en el eje X centrado en el valor (usando un span fijo en dex)
+function applyPanFromSlider(limits){
+    if (!hrChart) return;
+    if (!tempPan){
+        hrChart.options.scales.x.min = limits.tempMin;
+        hrChart.options.scales.x.max = limits.tempMax;
+        return;
+    }
+    const centerLog = parseFloat(tempPan.value);
+    const center = Math.pow(10, centerLog);
+    const spanDex = 2.0; // número de décadas visibles (ajustable)
+    const max = center * Math.pow(10, spanDex/2);
+    const min = center * Math.pow(10, -spanDex/2);
+    // Clamp a límites razonables
+    const clampedMax = Math.min(Math.max(max, limits.tempMin), limits.tempMax * 10);
+    const clampedMin = Math.max(Math.min(min, limits.tempMax), Math.max(50, limits.tempMin / 10));
+    hrChart.options.scales.x.max = clampedMax;
+    hrChart.options.scales.x.min = clampedMin;
+    tempPanLabel.textContent = `Centro visible: ${formatNumber(Math.round(center))} K (span ${spanDex} dex)`;
 }
 
 /* ---------------- Simulation loop ---------------- */
@@ -689,11 +730,11 @@ function initializeSimulation(){
   hrChart.data.datasets[0].data = [];
   hrChart.data.datasets[1].data = [];
   hrChart.update();
-  
+
   rebuildTimeline();
   updateStarVisual('protostar', parseFloat(massInput.value), 0);
   updateChartScales(); 
-  
+
   currentStageLabel.textContent = '—';
   tempVal.textContent = '— K';
   lumVal.textContent = '— L☉';
@@ -709,14 +750,12 @@ function startSimulation(){
     simState.totalYears = simState.timelineStages.reduce((s,st)=>s+st.durationYears,0);
   }
   // calcular BASE_YEARS_PER_SECOND dinámicamente según la vida total deseada (animación en SIMULATION_DISPLAY_SECONDS)
-  const yearsPerSecond = simState.totalYears / SIMULATION_DISPLAY_SECONDS; // si totalYears es pequeño, se ajusta
-  // Guardar en el estado para accesibilidad en seek
+  const yearsPerSecond = simState.totalYears / SIMULATION_DISPLAY_SECONDS;
   simState._yearsPerSecond = yearsPerSecond * SIM_SPEED_FACTOR;
 
   simState.running = true;
   simState.startTimestamp = performance.now();
   simState.lastTick = performance.now();
-  // ajustar elapsedAnimSeconds para que siga desde el tiempo real actual si ya había un elapsedRealYears
   simState.elapsedAnimSeconds = simState.elapsedRealYears / (yearsPerSecond * SIM_SPEED_FACTOR || 1);
   rafId = requestAnimationFrame(simulationStep);
   startBtn.disabled = true;
@@ -805,15 +844,14 @@ function updateUIFromElapsed(){
 
   // Update Chart (throttled por tiempo)
   const nowMs = performance.now();
+  const hrPoint = { x: temp, y: lum };
   if (nowMs - simState._lastChartUpdate > CHART_UPDATE_THROTTLE_MS){
     simState._lastChartUpdate = nowMs;
-    const hrPoint = { x: temp, y: lum };
     hrChart.data.datasets[0].data.push(hrPoint);
     hrChart.data.datasets[1].data = [hrPoint];
     hrChart.update('none');
   } else {
-    // actualizar solo el punto actual (sin push de trayectoria)
-    const hrPoint = { x: temp, y: lum };
+    // actualizar solo el punto actual (sin push de trayectoria) en memoria; actualizamos chart en la próxima throttle
     hrChart.data.datasets[1].data = [hrPoint];
   }
 
@@ -957,7 +995,7 @@ function exportCSV(){
   const headerMeta = `# Simulacion_Evolucion_Estelar\n# mass=${mass}\n# generated=${new Date().toISOString()}\n`;
   const header = ['year','stageId','stageTitle','temperature_K','luminosity_Lsun'];
   const rows = simState.records.map(r => [r.year, r.stage, r.stageTitle, r.temp, r.lum]);
-  let csv = headerMeta + header.join(',') + '\n' + rows.map(r=> r.map(cell => `"${String(cell).replace(/"/g,'""') }"`).join(',')).join('\n');
+  let csv = headerMeta + header.join(',') + '\n' + rows.map(r=> r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
 
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
@@ -989,7 +1027,7 @@ function downloadSampleCSV(){
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
 
-/* Export PNG of the chart */
+/* ---------------- Export PNG of the chart */
 function exportPNG(){
   try{
     const url = hrChart.toBase64Image();
@@ -1027,7 +1065,7 @@ exportBtn.addEventListener('click', exportCSV);
 exportPNGBtn.addEventListener('click', exportPNG);
 downloadSample.addEventListener('click', downloadSampleCSV);
 explainBtn.addEventListener('click', ()=>{
-  showModal('Cómo funciona', 'La simulación es pedagógica: toma la masa inicial, construye una secuencia de etapas (Protostar → Secuencia Principal → Gigante/RAG → Final) y recorre esas etapas en tiempo "acelerado". Las magnitudes (Temperatura, Luminosidad) son calculadas mediante funciones simplificadas que sirven para mostrar tendencias generales. El Diagrama H-R muestra esta evolución de forma astrofísica. Las escalas del diagrama se ajustan automáticamente a la masa seleccionada para mejorar la visualización de la trayectoria.');
+  showModal('Cómo funciona', 'La simulación es pedagógica: toma la masa inicial, construye una secuencia de etapas (Protostar → Secuencia Principal → Gigante/RAG → Final) y recorre esas etapas en tiempo \"acelerado\". Las magnitudes (Temperatura, Luminosidad) son calculadas mediante funciones simplificadas que sirven para mostrar tendencias generales. El Diagrama H-R muestra esta evolución de forma astrofísica. Las escalas del diagrama se ajustan automáticamente a la masa seleccionada para mejorar la visualización de la trayectoria.');
 });
 
 // Lógica de control de velocidad
@@ -1048,10 +1086,20 @@ speedBtns.forEach(btn => {
     });
 });
 
+
 /* initialize */
 initializeSimulation();
 rebuildTimeline();
-updateChartScales(); 
+updateChartScales();
+
+// Vincular el slider de pan (si existe) para actualizar la vista al moverlo
+if (tempPan) {
+  tempPan.addEventListener('input', function(){
+    const limits = getScaleLimitsForMass(parseFloat(massInput.value));
+    applyPanFromSlider(limits);
+    hrChart.update('none');
+  });
+}
 
 /* Accessibility: keyboard to close modal */
 document.addEventListener('keydown', (e)=>{
