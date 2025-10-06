@@ -28,7 +28,7 @@
                 var(--bg);
     color:#e6eef8;
     -webkit-font-smoothing:antialiased;
-    -moz-osx-osx-smoothing:grayscale;
+    -moz-osx-osx-font-smoothing:grayscale;
   }
 
   .container{
@@ -70,6 +70,9 @@
     font-size:14px;
   }
   input[type="range"]{ width:160px; }
+  /* Nuevo estilo para el slider de temperatura (ancho total) */
+  input[type="range"]#tempRange{ width:100%; margin-top:4px; } 
+
 
   button{
     padding:8px 12px;
@@ -98,7 +101,8 @@
 
   /* Left column specifics */
   .stats { margin-top:14px; display:grid; gap:8px; }
-  .stat-row{ display:flex; justify-content:space-between; font-size:14px; padding:8px; border-radius:8px; background: rgba(255,255,255,0.01); }
+  .stat-row{ display:flex; justify-content:space-between; font-size:14px; padding:8px; border-radius:8px; background: rgba(255,255,255,0.01); flex-direction: column; }
+  .stat-row > div { display: flex; justify-content: space-between; align-items: center; } /* Para el título y valor */
   .stat-row small{ color:var(--muted); }
 
   .star-preview {
@@ -229,7 +233,14 @@
       </div>
       <div class="stats">
         <div class="stat-row"><div><small>Etapa actual</small><div id="currentStage" style="font-weight:700">—</div></div></div>
-        <div class="stat-row"><div><small>Temperatura superficial</small><div id="tempVal">— K</div></div></div>
+        
+        <div class="stat-row">
+            <div>
+                <small>Temperatura superficial</small>
+                <div id="tempVal">— K</div>
+            </div>
+            <input id="tempRange" type="range" min="2000" max="50000" step="10" value="5778" disabled title="Temperatura Superficial">
+        </div>
         <div class="stat-row"><div><small>Luminosidad</small><div id="lumVal">— L☉</div></div></div>
         <div class="stat-row"><div><small>Tiempo transcurrido</small><div id="timeVal">0 yr</div></div></div>
       </div>
@@ -293,7 +304,7 @@
 <script>
 /*
   Simulador de Evolución Estelar — index.html
-  Actualizaciones: Escalas del Diagrama H-R corregidas para estrellas muy masivas.
+  Actualizaciones: Escalas dinámicas corregidas + Slider de Temperatura.
 */
 
 /* ------------ Configuración / modelos simplificados ------------ */
@@ -365,7 +376,7 @@ function lumFor(stageId, mass, progressStage){
   }
 }
 
-// FUNCIÓN CORREGIDA: Determina los límites de escala H-R basados en la masa.
+// FUNCIÓN DE ESCALADO CORREGIDA
 function getScaleLimitsForMass(mass) {
     let tempMin = 2000;
     let tempMax = 50000;
@@ -385,10 +396,8 @@ function getScaleLimitsForMass(mass) {
     } else { // Estrellas de alta masa (> 8 M☉)
         tempMin = 5000;
         tempMax = 50000;
-        // CORRECCIÓN CLAVE: Ajustar LumMax para que M^3.5 no se salga del rango.
-        // M=100 -> L_max ~ 1.5e8. Usaremos 1e9 para margen de seguridad.
         lumMin = 100; 
-        lumMax = 1e9; // 1,000,000,000 L☉
+        lumMax = 1e9; // Rango máximo para M=100
     }
     
     // Ajuste extra para asegurar que el punto final no quede fuera de la Enana Blanca.
@@ -415,6 +424,7 @@ let speedBtns = document.querySelectorAll('.speed-btn');
 
 let currentStageLabel = document.getElementById('currentStage');
 let tempVal = document.getElementById('tempVal');
+let tempRange = document.getElementById('tempRange'); // Nuevo
 let lumVal = document.getElementById('lumVal');
 let timeVal = document.getElementById('timeVal');
 let finalBadge = document.getElementById('finalBadge');
@@ -571,7 +581,6 @@ hrChart = new Chart(ctx, {
         reverse: true,
         grid: { color: 'rgba(255,255,255,0.05)' },
         ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
-            // Custom ticks to show powers of 10 and 5000/20000 marks
             if (Math.log10(value) % 1 === 0 && value >= 1000) return formatNumber(value);
             if (value >= 10000 && (value / 5000) % 1 === 0) return formatNumber(value);
             return null;
@@ -584,7 +593,6 @@ hrChart = new Chart(ctx, {
         max: 1e6, 
         grid: { color: 'rgba(255,255,255,0.05)' },
         ticks: { color: 'var(--muted)', callback: function(value, index, values) { 
-            // Custom ticks to show powers of 10
             if (Math.log10(value) % 1 === 0) return formatNumber(value);
             return null; 
         } }
@@ -607,6 +615,10 @@ function updateChartScales() {
     // Actualizar límites del Eje Y (Luminosidad)
     hrChart.options.scales.y.min = limits.lumMin;
     hrChart.options.scales.y.max = limits.lumMax;
+    
+    // Ajustar los límites del slider de Temperatura
+    tempRange.min = limits.tempMin;
+    tempRange.max = limits.tempMax;
     
     hrChart.update('none'); 
 }
@@ -646,6 +658,7 @@ function initializeSimulation(){
   
   currentStageLabel.textContent = '—';
   tempVal.textContent = '— K';
+  tempRange.value = tempRange.min; // Resetear el slider
   lumVal.textContent = '— L☉';
   timeVal.textContent = '0 yr';
 }
@@ -718,6 +731,7 @@ function simulationStep(ts){
   // Update UI
   currentStageLabel.textContent = stage.title;
   tempVal.textContent = `${formatNumber(temp)} K`;
+  tempRange.value = temp; // Actualizar el slider de temperatura
   lumVal.textContent = `${formatNumber(lum)} L☉`;
   timeVal.textContent = `${formatNumber(displayTime)} yr`;
 
